@@ -1,0 +1,114 @@
+<?php
+/**
+ * @file
+ * Enables easy login through path syntax '/link' provide by Docebo URL SSO.
+ * Sartor Michele 09/2015
+ */
+
+
+/*****************************************************************************
+ * DRUPAL HOOKS
+ *****************************************************************************/
+function docebo_url_login_menu() {
+  $items = array();
+  $items['link'] = array(
+    'title' => 'Docebo SSO URL login',
+    'page callback' => 'auto_login_login',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  $items['admin/settings/docebo-url-login-settings'] = array(
+    'title' => 'Docebo URL login settings',
+    'description' => 'Settings page to provide drupal secret key',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('docebo_url_login_admin'),
+    'access arguments' => array('administer onthisdate settings'),
+    'type' => MENU_LOCAL_ACTION,
+   );
+   
+  return $items;
+}
+
+/**
+* HOOK HELPER FUNCTIONS 
+* Callback for '/link' path. Log user in with given credentials.
+*/ 
+function auto_login_login($field = 'default param') {
+  $param =  FALSE;
+  // fetching parameters
+  if(isset($_GET['timestamp']))
+	  $timestamp = urldecode($_GET['timestamp']);
+  else $param = TRUE;  
+  if(isset($_GET['username']))
+    $username = urldecode($_GET['username']);
+  else $param = TRUE;
+  if(isset($_GET['email']))
+    $email = urldecode($_GET['email']);
+  else $param = TRUE;
+  if(isset($_GET['hash']))
+    $recivedHash = urldecode($_GET['hash']);
+  else $param = TRUE;
+  
+  if($param == FALSE){
+    //reading set secret key
+    $secretKey = variable_get('docebo_url_login_secretkey');
+    //check is secreted key set
+    if(!$secretKey)
+      drupal_set_message(t('Error: must insert same secret key inserted in Docebo to use this module.'),'error');
+    // calculate hash with recived parameters
+    $calculateHash = base64_encode(hash_hmac('sha1',$timestamp.$username.$email, $secretKey, true));
+    // compare hash
+    $recivedHash == $calculateHash ? $trueHash = true : $trueHash = false;
+    
+    //check email, return string if not valid email
+    if( user_validate_mail($email) == '' && $trueHash){
+      //get password return an $user object with encrypted password
+      $userData = user_load_by_name($username);
+      // Login user, if credentials is passed
+      $response['status'] = 'success';
+      if (isset($userData->uid)) {
+        if (!variable_get('user_email_verification', TRUE) || $userData->login) {
+          // Check if user is blocked.
+          $state ['values']['name'] = $userData->name;
+          user_login_name_validate(array(), $state);
+          if (!form_get_errors()) {
+            // Load global $user and perform final login tasks.
+            $form_state ['uid'] = $userData->uid;
+            user_login_submit(array(), $form_state);
+            // Let other modules act on OpenID login
+            module_invoke_all('openid_response', $response, $userData);
+          }
+        }
+        else {
+          drupal_set_message(t('You must validate your email address for this account before logging via Docebo. Your account is not registered into DigitalBook'),'warning');
+        }
+      }
+    }
+  }
+  // Integration with Login destination
+  if (function_exists('login_destination_redirect')) {
+    login_destination_redirect();
+  }
+  // Default go to front page
+  drupal_goto('');
+}
+/*
+* Function to create module settings page
+*/
+function docebo_url_login_admin() {
+  $form = array();//password
+  $form['docebo_url_login_secretkey'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Secret key'),
+    '#default_value' => variable_get('docebo_url_login_secretkey', ''),
+    '#size' => 15,
+    '#maxlength' => 100,
+    '#description' => t("The same secret key inserted into Docebo link form. Need to check if URL hash is correct to validate user parameters."),
+    '#required' => TRUE,
+  );
+
+  return system_settings_form($form);
+}
+
+//test link
+///link?timestamp=1442310597&username=modonetwork&email=helpdesk%40modonetwork.com&hash=zVu6uLYeU2T8ChduyqbcXB0VEnM%3D
